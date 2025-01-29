@@ -253,11 +253,237 @@ function SlashCommand:output(selected, opts)
         return kind == k
       end)
       :each(function(k)
+        local node_kind = k
+        local node_kind_text = node_kind:lower()
         local range = range_from_nodes(start_node, end_node)
         if name_match.node then
           local name = vim.trim(get_node_text(name_match.node, content)) or "<parse error>"
+          ---@type { before_name: string[], after_name: string[] }
+          local symbol_metadata = {
+            before_name = {},
+            after_name = {},
+          }
+          local full_text = ""
 
-          table.insert(symbols, fmt("- %s: `%s` (from line %s to %s)", k:lower(), name, range.lnum, range.end_lnum))
+          -- Check if it's a single-line declaration
+          if range.lnum == range.end_lnum and symbol_node then
+            local start_row = symbol_node:start()
+            local end_row = symbol_node:end_()
+            if start_row == end_row then
+              full_text = vim.trim(get_node_text(symbol_node, content))
+            else
+              full_text = ""
+            end
+          end
+
+          if full_text == "" then
+            -- Extract parameters for Functions and Methods
+            -- Currently supports TypeScript and Lua
+            if node_kind == "Function" or node_kind == "Method" then
+              -- Handle parameters if they exist
+              -- Always show empty parentheses for functions/methods without parameters
+              local parameters_text = "()"
+              if match.parameters and match.parameters.node then
+                local parameters_node = vim.trim(get_node_text(match.parameters.node, content))
+                if parameters_node and parameters_node ~= "" then
+                  parameters_text = parameters_node
+                end
+              end
+              table.insert(symbol_metadata.after_name, 1, parameters_text)
+            end
+
+            -- TypeScript specific handling
+            if match.language and match.language == "typescript" then
+              -- Handle `export` and `default` keywords for functions, interfaces and classes
+              if match.export and match.export.node then
+                table.insert(symbol_metadata.before_name, "export" .. " ")
+              end
+              if match.default and match.default.node then
+                table.insert(symbol_metadata.before_name, "default" .. " ")
+              end
+
+              -- Interfaces and Type Aliases
+              if node_kind == "Interface" then
+                if match.symbol_keyword and match.symbol_keyword.node then
+                  local symbol_keyword = vim.trim(get_node_text(match.symbol_keyword.node, content))
+                  if symbol_keyword and symbol_keyword ~= "" then
+                    table.insert(symbol_metadata.before_name, symbol_keyword .. " ")
+                  end
+                end
+
+              -- Functions and Methods
+              elseif node_kind == "Function" or node_kind == "Method" then
+                -- Handle return type of the function/method
+                -- symbol_metadata.return_type = ""
+                local return_type_text = ""
+                if match.return_type and match.return_type.node then
+                  local return_type_node = vim.trim(get_node_text(match.return_type.node, content))
+                  if return_type_node and return_type_node ~= "" then
+                    return_type_text = return_type_node
+                  end
+                end
+                table.insert(symbol_metadata.after_name, 2, return_type_text)
+
+                -- Handle detection of abstract methods
+                if match.abstract_method and match.abstract_method.node then
+                  table.insert(symbol_metadata.before_name, "abstract" .. " ")
+                end
+
+                -- Handle access modifiers such as `public`, `private`, `protected`
+                if match.acc_modifier and match.acc_modifier.node then
+                  local acc_modifier_text = vim.trim(get_node_text(match.acc_modifier.node, content))
+                  if acc_modifier_text and acc_modifier_text ~= "" then
+                    table.insert(symbol_metadata.before_name, acc_modifier_text .. " ")
+                  end
+                end
+
+                -- Handle detection of static methods
+                if match.static and match.static.node then
+                  table.insert(symbol_metadata.before_name, "static" .. " ")
+                end
+
+                -- Handle detection of readonly methods
+                if match.read_only and match.read_only.node then
+                  table.insert(symbol_metadata.before_name, "readonly" .. " ")
+                end
+
+                -- Handle generic type parameters if they exist
+                if match.type_parameters and match.type_parameters.node then
+                  local type_parameters_text = vim.trim(get_node_text(match.type_parameters.node, content))
+                  if type_parameters_text and type_parameters_text ~= "" then
+                    table.insert(symbol_metadata.after_name, 1, type_parameters_text)
+                  end
+                end
+
+                -- Handle detection of arrow functions (var vs const vs let keyword)
+                -- For regular functions, this will be `function`
+                if match.symbol_keyword and match.symbol_keyword.node then
+                  -- If arrow function, add " = " before parameters "()"
+                  if match.arrow and match.arrow.node then
+                    table.insert(symbol_metadata.after_name, 1, " = ")
+                    -- Add " => " after return type
+                    table.insert(symbol_metadata.after_name, " => {")
+                    -- Handle detection of the async keyword for arrow functions
+                    if match.async and match.async.node then
+                      table.insert(symbol_metadata.after_name, 2, "async" .. " ")
+                    end
+                  else
+                    -- Handle detection of the async keyword for regular functions
+                    if match.async and match.async.node then
+                      table.insert(symbol_metadata.before_name, "async" .. " ")
+                    end
+                  end
+
+                  -- Add in the const/let/var keyword for arrow functions and function for regular functions
+                  local symbol_keyword = vim.trim(get_node_text(match.symbol_keyword.node, content))
+                  if symbol_keyword and symbol_keyword ~= "" then
+                    table.insert(symbol_metadata.before_name, symbol_keyword)
+                    -- If a generator function, do NOT add a space after the function keyword
+                    if match.generator and match.generator.node then
+                      -- Do nothing... asterisk is added below directly to function*
+                    else
+                      table.insert(symbol_metadata.before_name, " ")
+                    end
+                  end
+                end
+
+                -- Handle async for methods
+                if node_kind == "Method" then
+                  if match.async and match.async.node then
+                    table.insert(symbol_metadata.before_name, "async" .. " ")
+                  end
+                end
+
+                -- Handle detection of generator functions*
+                if match.generator and match.generator.node then
+                  if node_kind == "Method" then
+                    table.insert(symbol_metadata.before_name, "*")
+                  else
+                    table.insert(symbol_metadata.before_name, "*" .. " ")
+                  end
+                end
+
+              -- Classes
+              elseif node_kind == "Class" then
+                -- Handle detection of the abstract keyword
+                if match.abstract_class and match.abstract_class.node then
+                  table.insert(symbol_metadata.before_name, "abstract" .. " ")
+                end
+
+                -- Add class symbol keyword
+                if match.symbol_keyword and match.symbol_keyword.node then
+                  local symbol_keyword = vim.trim(get_node_text(match.symbol_keyword.node, content))
+                  if symbol_keyword and symbol_keyword ~= "" then
+                    table.insert(symbol_metadata.before_name, symbol_keyword .. " ")
+                  end
+                end
+
+                -- Handle detection of the extends or implements keywords
+                if match.inherit and match.inherit.node then
+                  local inherit_text = vim.trim(get_node_text(match.inherit.node, content))
+                  if inherit_text and inherit_text ~= "" then
+                    table.insert(symbol_metadata.after_name, " " .. inherit_text)
+                  end
+                end
+              end
+            end
+          end
+
+          -- Use full text for single-line declarations, otherwise use the formatted version
+          local symbol_text = full_text
+          if symbol_text == "" then
+            -- -- TEMP: TODO: Remove this... testing purposes only
+            -- symbol_metadata.before_name = {}
+            -- symbol_metadata.after_name = {}
+
+            -- loop through before_name and add only items that are not empty
+            local before_name = table.concat(vim.tbl_filter(function(v)
+              return v ~= ""
+            end, symbol_metadata.before_name), "")
+            if not before_name then
+              before_name = ""
+            end
+            -- if before_name ~= "" then
+            --   before_name = before_name .. ""
+            -- end
+
+            -- loop through after_name and add only items that are not empty
+            local after_name = table.concat(vim.tbl_filter(function(v)
+              return v ~= ""
+            end, symbol_metadata.after_name), "")
+            if not after_name then
+              after_name = ""
+            end
+
+            symbol_text = fmt(
+              "%s%s%s",
+              before_name,
+              name,
+              after_name
+            )
+          end
+
+          -- TypeScript specific handling for normalizing the final node_kind_text
+          if match.language and match.language == "typescript" then
+            if node_kind == "Interface" then
+              if match.symbol_keyword and match.symbol_keyword.node then
+                local symbol_keyword = vim.trim(get_node_text(match.symbol_keyword.node, content))
+                if symbol_keyword and symbol_keyword ~= "" then
+                  node_kind_text = symbol_keyword:lower()
+                end
+              end
+            end
+          end
+
+          local final_text = fmt(
+            "- %s: `%s` (from line %s to %s)",
+            node_kind_text,
+            symbol_text,
+            range.lnum,
+            range.end_lnum
+          )
+
+          table.insert(symbols, final_text)
         end
       end)
 

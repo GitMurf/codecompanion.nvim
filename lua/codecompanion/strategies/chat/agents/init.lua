@@ -47,6 +47,10 @@ local function parse_xml(message)
 
   log:trace("Parsed xml: %s", handler.root)
 
+  if not handler.root.tools then
+    handler.root.tools = {}
+    table.insert(handler.root.tools, handler.root.tool)
+  end
   return handler.root.tools
 end
 
@@ -171,6 +175,10 @@ function Agent:execute(chat, xml)
     -- If an error occurred, don't run any more tools
     if self.status == CONSTANTS.STATUS_ERROR then
       return
+    end
+
+    if not s.tool and s[1] and s[1]._attr then
+      s.tool = s[1]
     end
 
     local name = s.tool._attr.name

@@ -14,6 +14,7 @@ local defaults = {
     -- LLMs -------------------------------------------------------------------
     anthropic = "anthropic",
     azure_openai = "azure_openai",
+    claude_max = "claude_max",
     copilot = "copilot",
     deepseek = "deepseek",
     gemini = "gemini",
